@@ -1,0 +1,4 @@
+"use client";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+export default function Success() { const params = useSearchParams(); const report = params.get("report"); const receipt = report ? sessionStorage.getItem(`lastline-receipt-${report}`) : null; const data = receipt ? JSON.parse(receipt) : null; return <main className="form-page"><nav><Link href="/">LASTLINE</Link></nav><h1>Report received</h1><p role="status">This report is community-reported and has not yet been verified.</p>{data ? <><h2>Save this private tracking token</h2><code>{data.tracking_token}</code><p>Keep it private. It is required to follow your report without an account.</p><Link className="button" href={`/incidents/${data.incident_id}`}>View public incident status</Link></> : <p>Your receipt is only available in the browser used to submit it. Submit a new report if you need a new tracking token.</p>}</main>; }
