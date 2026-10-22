@@ -64,6 +64,13 @@ class InterventionCreate(BaseModel):
     proposed_payload: dict
     idempotency_key: str = Field(min_length=8, max_length=200)
 
+class SourceSyncUpdate(BaseModel):
+    source_id: str = Field(min_length=3, max_length=100)
+    status: str
+    records_seen: int = Field(ge=0)
+    records_created: int = Field(ge=0)
+    error_redacted: str | None = Field(default=None, max_length=500)
+
 def _require_operations_token(token: str | None) -> None:
     expected = os.getenv("OPERATIONS_TOKEN")
     if not expected:
@@ -152,6 +159,25 @@ def create_official_event(event: OfficialEvent, x_source_ingest_token: Annotated
         return {"incident_id": incident_id, "created": created, "source_id": event.source_id}
     except psycopg.Error as exc:
         raise HTTPException(503, "Official event storage is temporarily unavailable") from exc
+
+@app.post("/v1/internal/source-sync-runs", status_code=201)
+def record_source_sync(update: SourceSyncUpdate, x_source_ingest_token: Annotated[str | None, Header()] = None):
+    configured_token = os.getenv("SOURCE_INGEST_TOKEN")
+    if not configured_token or not x_source_ingest_token or not secrets.compare_digest(configured_token, x_source_ingest_token):
+        raise HTTPException(403, "Invalid source ingestion credentials")
+    if update.status not in {"succeeded", "failed"}:
+        raise HTTPException(422, "Source sync status must be succeeded or failed")
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("INSERT INTO source_sync_runs (source_id, status, records_seen, records_created, error_redacted, finished_at) VALUES (%s, %s, %s, %s, %s, now()) RETURNING id", (update.source_id, update.status, update.records_seen, update.records_created, update.error_redacted))
+        sync_id = cursor.fetchone()["id"]
+    return {"sync_id": sync_id, "status": update.status}
+
+@app.get("/v1/operations/sources")
+def source_health(x_operations_token: Annotated[str | None, Header()] = None):
+    _require_operations_token(x_operations_token)
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT DISTINCT ON (source_id) source_id, status, records_seen, records_created, started_at, finished_at, error_redacted FROM source_sync_runs ORDER BY source_id, started_at DESC")
+        return {"sources": cursor.fetchall()}
 
 @app.get("/v1/incidents/{incident_id}/dependencies")
 def get_dependencies(incident_id: UUID):
