@@ -37,4 +37,6 @@ PostGIS, a Nebius Token Factory key, and a verified NVIDIA model ID are deployme
 
 Official source ingestion is protected by `SOURCE_INGEST_TOKEN`. Milestone 2 currently includes the provenance-preserving NWS alert parser and an authenticated official-event intake endpoint; scheduling real source polls is the next increment.
 
+`services/worker/nws_poll.py` is the bounded one-shot NWS polling entry point. Run it only from an approved scheduler after setting its API URL and ingestion token; it reads the official NWS active-alert feed and sends the source record through the same intake endpoint.
+
 See [deployment instructions](docs/deployment.md) for the Vercel, Render, and Supabase demo path. The coordinator endpoints require `OPERATIONS_TOKEN`; they create proposals and approval records only, never send external communications.
