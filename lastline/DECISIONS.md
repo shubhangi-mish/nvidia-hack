@@ -33,3 +33,7 @@ Update this file whenever a choice is confirmed; keep reason, date, and conseque
 - **Pilot: NYC.** It supports the later transit-accessibility journey and a dense set of CMS facilities. CMS dialysis directory and NWS Alerts are validated initial sources; the MTA elevator feed remains unapproved until its programmatic terms and endpoint are verified.
 - **Nebius integration: Token Factory, configured model ID.** Its OpenAI-compatible API and `GET /v1/models` are verified, but its model catalog is key-scoped. No model ID is embedded in source; model smoke testing is blocked until a key and selected NVIDIA/Nemotron model are supplied.
 - **Milestone 1 data strategy: fail closed.** The local report API has an in-memory development repository only until the PostGIS environment is provisioned. It must not be represented as durable production operation. Its schema migration is included for the durable deployment path.
+
+### 2026-10-22 — Deployment and operations boundary
+- **Demo deployment: Vercel + Render + Supabase.** This is a free-tier-friendly hackathon path with explicit sleeping/availability limitations.
+- **Consequential operations: token-gated proposal and approval records only.** No service sends third-party messages, issues public urgent alerts, or performs bookings/transfers.

@@ -7,12 +7,15 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 from psycopg.rows import dict_row
 from .sources import OfficialEvent
+from .nebius import NebiusNotConfigured, smoke_test
 
 app = FastAPI(title="LASTLINE API", version="0.1.0")
+app.add_middleware(CORSMiddleware, allow_origins=[value for value in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if value], allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Idempotency-Key", "tracking-token", "x-source-ingest-token", "x-operations-token"])
 
 class VerificationStatus(StrEnum):
     COMMUNITY_REPORTED = "community_reported"
@@ -55,6 +58,18 @@ class PublicIncident(BaseModel):
     lifecycle_state: str
     first_seen: datetime
     location_label: str
+
+class InterventionCreate(BaseModel):
+    action_type: str = Field(min_length=3, max_length=100)
+    proposed_payload: dict
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+def _require_operations_token(token: str | None) -> None:
+    expected = os.getenv("OPERATIONS_TOKEN")
+    if not expected:
+        raise HTTPException(503, "Coordinator operations are not configured")
+    if not token or not secrets.compare_digest(expected, token):
+        raise HTTPException(403, "Coordinator authorization required")
 
 class StoredReport(BaseModel):
     id: UUID
@@ -138,6 +153,43 @@ def create_official_event(event: OfficialEvent, x_source_ingest_token: Annotated
     except psycopg.Error as exc:
         raise HTTPException(503, "Official event storage is temporarily unavailable") from exc
 
+@app.get("/v1/incidents/{incident_id}/dependencies")
+def get_dependencies(incident_id: UUID):
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT upstream_entity, downstream_entity, dependency_type, confidence_label FROM dependencies WHERE upstream_entity = %s OR downstream_entity = %s", (incident_id, incident_id))
+        edges = cursor.fetchall()
+    return {"incident_id": incident_id, "edges": edges, "effect_label": "possible unless independently verified"}
+
+@app.get("/v1/incidents/{incident_id}/alternatives")
+def get_alternatives(incident_id: UUID):
+    return {"incident_id": incident_id, "alternatives": [], "caveat": "No verified alternative capacity, stock, booking, insurance, or accessibility availability is currently available."}
+
+@app.post("/v1/operations/incidents/{incident_id}/interventions", status_code=201)
+def propose_intervention(incident_id: UUID, proposal: InterventionCreate, x_operations_token: Annotated[str | None, Header()] = None):
+    _require_operations_token(x_operations_token)
+    intervention_id = uuid4()
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("INSERT INTO interventions (id, incident_id, action_type, proposed_payload, approval_state, idempotency_key) VALUES (%s, %s, %s, %s::jsonb, 'proposed', %s) ON CONFLICT (idempotency_key) DO NOTHING RETURNING id", (intervention_id, incident_id, proposal.action_type, __import__('json').dumps(proposal.proposed_payload), proposal.idempotency_key))
+        row = cursor.fetchone()
+    return {"intervention_id": row["id"] if row else intervention_id, "approval_state": "proposed", "external_action_permitted": False}
+
+@app.post("/v1/operations/interventions/{intervention_id}/{decision}")
+def decide_intervention(intervention_id: UUID, decision: str, x_operations_token: Annotated[str | None, Header()] = None):
+    _require_operations_token(x_operations_token)
+    if decision not in {"approve", "reject"}: raise HTTPException(404, "Unknown operation")
+    state = "approved" if decision == "approve" else "rejected"
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("UPDATE interventions SET approval_state = %s, approved_at = now() WHERE id = %s RETURNING id", (state, intervention_id))
+        if not cursor.fetchone(): raise HTTPException(404, "Intervention not found")
+    return {"intervention_id": intervention_id, "approval_state": state, "external_action_executed": False}
+
+@app.post("/v1/operations/nebius/smoke-test")
+def nebius_smoke(x_operations_token: Annotated[str | None, Header()] = None):
+    _require_operations_token(x_operations_token)
+    try: return smoke_test()
+    except NebiusNotConfigured as exc: raise HTTPException(503, str(exc)) from exc
+    except Exception as exc: raise HTTPException(502, "Nebius smoke test failed") from exc
+
 @app.get("/v1/incidents/{incident_id}", response_model=PublicIncident)
 def get_incident(incident_id: UUID):
     with _connection() as connection, connection.cursor() as cursor:
@@ -146,6 +198,24 @@ def get_incident(incident_id: UUID):
     if not row:
         raise HTTPException(404, "Incident not found")
     return PublicIncident(**row, location_label="Location withheld pending verification")
+
+@app.get("/v1/incidents", response_model=list[PublicIncident])
+def list_incidents(limit: int = 30):
+    limit = max(1, min(limit, 100))
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT id, summary, type AS category, verification_status, lifecycle_state, first_seen FROM incidents WHERE public_visibility = true ORDER BY updated_at DESC LIMIT %s", (limit,))
+        rows = cursor.fetchall()
+    return [PublicIncident(**row, location_label="Location withheld pending verification") for row in rows]
+
+@app.get("/v1/incidents/{incident_id}/events")
+def incident_events(incident_id: UUID):
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT actor, event_type, timestamp FROM case_events WHERE incident_id = %s ORDER BY timestamp", (incident_id,))
+        return {"incident_id": incident_id, "events": cursor.fetchall(), "streaming": "SSE is not configured; poll this redacted timeline."}
+
+@app.get("/v1/incidents/{incident_id}/evidence")
+def incident_evidence(incident_id: UUID):
+    return {"incident_id": incident_id, "evidence": [], "status": "No source-linked evidence has been collected yet."}
 
 @app.get("/v1/reports/{report_id}", response_model=Receipt)
 def get_private_report(report_id: UUID, tracking_token: Annotated[str | None, Header()] = None):
