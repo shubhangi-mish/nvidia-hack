@@ -3,6 +3,14 @@ on: [push, pull_request]
 jobs:
   api:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: lastline
+          POSTGRES_USER: lastline
+          POSTGRES_PASSWORD: change_me
+        ports: [5432:5432]
     defaults:
       run:
         working-directory: services/api
@@ -11,7 +19,10 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: pip install '.[dev]'
+      - run: python -c "import psycopg; c=psycopg.connect('postgresql://lastline:change_me@localhost:5432/lastline'); c.execute(open('../../infra/migrations/001_initial.sql').read()); c.commit()"
       - run: pytest tests
+        env:
+          DATABASE_URL: postgresql://lastline:change_me@localhost:5432/lastline
   web:
     runs-on: ubuntu-latest
     defaults:

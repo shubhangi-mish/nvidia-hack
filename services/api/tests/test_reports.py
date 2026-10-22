@@ -13,6 +13,9 @@ def test_anonymous_report_receipt_and_redacted_public_detail():
     assert "elevator" not in public.json()["summary"].lower()
     assert "Herald" not in public.json()["location_label"]
     assert public.json()["verification_status"] == "community_reported"
+    private = client.get(f"/v1/reports/{receipt['report_id']}", headers={"tracking-token": receipt["tracking_token"]})
+    assert private.status_code == 200
+    assert private.json()["tracking_token"] == ""
 
 def test_coordinate_pair_is_required():
     response = client.post("/v1/reports", json={"description": "A detailed report about an access problem.", "location_text": "New York", "latitude": 40.7})

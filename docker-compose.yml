@@ -11,3 +11,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  api:
+    build: ./services/api
+    environment:
+      DATABASE_URL: postgresql://lastline:change_me@db:5432/lastline
+      SESSION_SECRET: development-only-change-before-deploy
+    ports: ["8000:8000"]
+    depends_on:
+      db:
+        condition: service_healthy
