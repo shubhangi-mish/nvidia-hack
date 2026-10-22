@@ -34,3 +34,5 @@ See [docs/dataset-manifest.md](docs/dataset-manifest.md) for the audited sources
 ## Current integration state
 
 PostGIS, a Nebius Token Factory key, and a verified NVIDIA model ID are deployment credentials not included in this repository. The inference integration remains deliberately unavailable until supplied.
+
+Official source ingestion is protected by `SOURCE_INGEST_TOKEN`. Milestone 2 currently includes the provenance-preserving NWS alert parser and an authenticated official-event intake endpoint; scheduling real source polls is the next increment.

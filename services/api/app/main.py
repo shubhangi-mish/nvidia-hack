@@ -10,6 +10,7 @@ from fastapi import FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 from psycopg.rows import dict_row
+from .sources import OfficialEvent
 
 app = FastAPI(title="LASTLINE API", version="0.1.0")
 
@@ -77,6 +78,21 @@ def _public_summary(description: str) -> str:
     # Public text is intentionally not the reporter's verbatim allegation.
     return "A community report has been received and is awaiting verification."
 
+def ingest_official_event(event: OfficialEvent) -> tuple[UUID, bool]:
+    """Create one canonical case per official external record, idempotently."""
+    incident_id, raw_event_id = uuid4(), uuid4()
+    now = datetime.now(timezone.utc)
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT id FROM incidents WHERE source_event_key = %s", (event.dedupe_key,))
+        existing = cursor.fetchone()
+        if existing:
+            return existing["id"], False
+        payload = event.model_dump(mode="json")
+        cursor.execute("INSERT INTO raw_events (id, source_kind, source_id, source_url, observed_at, payload_json, received_at, idempotency_key) VALUES (%s, 'official_api', %s, %s, %s, %s::jsonb, %s, %s)", (raw_event_id, event.source_id, str(event.source_url), event.observed_at, __import__('json').dumps(payload), now, event.dedupe_key))
+        cursor.execute("INSERT INTO incidents (id, type, summary, verification_status, lifecycle_state, first_seen, updated_at, public_visibility, source_event_key) VALUES (%s, %s, %s, 'officially_confirmed', 'received', %s, %s, true, %s)", (incident_id, event.event_type, event.description, now, now, event.dedupe_key))
+        cursor.execute("INSERT INTO case_events (incident_id, actor, event_type, timestamp, payload_redacted) VALUES (%s, %s, 'official_event_received', %s, '{}'::jsonb)", (incident_id, event.source_id, now))
+    return incident_id, True
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok", "service": "lastline-api"}
@@ -108,6 +124,19 @@ def create_report(payload: ReportCreate, idempotency_key: Annotated[str | None, 
         return Receipt(incident_id=incident_id, report_id=report_id, tracking_token=token, verification_status=VerificationStatus.COMMUNITY_REPORTED, lifecycle_state="received")
     except psycopg.Error as exc:
         raise HTTPException(503, "Report storage is temporarily unavailable") from exc
+
+@app.post("/v1/internal/official-events", status_code=status.HTTP_201_CREATED)
+def create_official_event(event: OfficialEvent, x_source_ingest_token: Annotated[str | None, Header()] = None):
+    configured_token = os.getenv("SOURCE_INGEST_TOKEN")
+    if not configured_token:
+        raise HTTPException(503, "Official source ingestion is not configured")
+    if not x_source_ingest_token or not secrets.compare_digest(configured_token, x_source_ingest_token):
+        raise HTTPException(403, "Invalid source ingestion credentials")
+    try:
+        incident_id, created = ingest_official_event(event)
+        return {"incident_id": incident_id, "created": created, "source_id": event.source_id}
+    except psycopg.Error as exc:
+        raise HTTPException(503, "Official event storage is temporarily unavailable") from exc
 
 @app.get("/v1/incidents/{incident_id}", response_model=PublicIncident)
 def get_incident(incident_id: UUID):
