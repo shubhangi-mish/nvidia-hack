@@ -56,10 +56,10 @@ export default function Home() {
       <section className="section section-tint" id="map" aria-labelledby="map-title">
         <div className="container">
           <p className="eyebrow">See it working · real data</p>
-          <h2 id="map-title">Every dialysis facility in the US, and what is happening around them right now.</h2>
+          <h2 id="map-title">Every dialysis facility and hospital in the US, and what is happening around them right now.</h2>
           <p className="lede narrow">
-            This map uses the official CMS directory of Medicare dialysis facilities and live National Weather Service
-            alerts. Pick an alert, or simulate an outage, and watch how LASTLINE turns a signal into a reviewed decision.
+            This map uses the official CMS directories of Medicare dialysis facilities and hospitals, plus live National
+            Weather Service alerts. Pick an alert, or simulate an outage, and watch how LASTLINE turns a signal into a reviewed decision.
           </p>
           <ImpactMap />
         </div>

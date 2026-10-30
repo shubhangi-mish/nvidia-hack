@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { byCounty, distanceMiles, nearestAlternatives, type Facility } from "./facilities";
 import { alertImpacts, type WeatherAlert } from "./nws";
 
-const make = (ccn: string, lat: number, lon: number, countyFips: string, services = 1, stations = 10): Facility => ({
-  ccn, name: ccn, city: "Town", state: "ZZ", zip: "00000", lat, lon, stations, services, countyFips,
+const make = (ccn: string, lat: number, lon: number, countyFips: string, services = 1, stations = 10, kind: Facility["kind"] = "dialysis"): Facility => ({
+  kind, ccn, name: ccn, city: "Town", state: "ZZ", zip: "00000", lat, lon, stations, services, countyFips,
 });
 
 const alert = (countyFips: string[], severity = "Severe"): WeatherAlert => ({
@@ -30,7 +30,19 @@ describe("facility helpers", () => {
       affected[0], make("far", 41, -80, "B"), make("near", 40.1, -80, "B"),
       make("home-only", 40.05, -80, "B", 4), make("empty", 40.02, -80, "B", 1, 0),
     ];
-    expect(nearestAlternatives(all, affected).map((a) => a.facility.ccn)).toEqual(["near", "far"]);
+    expect(nearestAlternatives(all, affected, "dialysis").map((a) => a.facility.ccn)).toEqual(["near", "far"]);
+  });
+});
+
+describe("hospital alternatives", () => {
+  it("suggests only emergency hospitals when a hospital is affected", () => {
+    const affected = [make("h1", 40, -80, "A", 8, 0, "hospital")];
+    const all = [
+      affected[0], make("er", 40.2, -80, "B", 8, 0, "hospital"), make("no-er", 40.1, -80, "B", 0, 0, "hospital"),
+      make("dialysis", 40.05, -80, "B"),
+    ];
+    expect(nearestAlternatives(all, affected, "hospital").map((a) => a.facility.ccn)).toEqual(["er"]);
+    expect(nearestAlternatives(all, affected, "dialysis")).toEqual([]);
   });
 });
 

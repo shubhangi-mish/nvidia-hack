@@ -1,6 +1,7 @@
-"""Build the public map dataset of US dialysis facilities.
+"""Build the public map dataset of US dialysis facilities and hospitals.
 
-Joins the official CMS Dialysis Facility listing (data.cms.gov, dataset 23ew-n7w9) with US Census
+Joins the official CMS Dialysis Facility listing (dataset 23ew-n7w9) and Hospital General Information
+(dataset xubh-q36u) from data.cms.gov with US Census
 ZIP-code centroids and county FIPS codes. Coordinates are ZIP-level approximations, NOT street addresses,
 and the directory says nothing about live capacity or availability.
 
@@ -13,7 +14,8 @@ from collections import Counter
 CMS_API = "https://data.cms.gov/provider-data/api/1/metastore/schemas/dataset/items/23ew-n7w9"
 GAZETTEER = "https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2023_Gazetteer/2023_Gaz_zcta_national.zip"
 COUNTIES = "https://www2.census.gov/geo/docs/reference/codes2020/national_county2020.txt"
-OUT = sys.argv[1] if len(sys.argv) > 1 else "apps/web/public/data/dialysis-facilities.json"
+HOSPITAL_API = "https://data.cms.gov/provider-data/api/1/metastore/schemas/dataset/items/xubh-q36u"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "apps/web/public/data/facilities.json"
 
 
 def fetch(url: str) -> bytes:
@@ -98,21 +100,41 @@ def main() -> None:
             stations,
             flags,
             fips,
+            "d",
         ])
 
+
+    hospital_meta = json.loads(fetch(HOSPITAL_API))
+    hospital_cols = {"id": "Facility ID", "name": "Facility Name", "city": "City/Town", "state": "State", "zip": "ZIP Code",
+                     "county": "County/Parish", "type": "Hospital Type", "emergency": "Emergency Services"}
+    hospital_count, hospital_skipped = 0, 0
+    for raw in csv.DictReader(io.StringIO(fetch(hospital_meta["distribution"][0]["downloadURL"]).decode("utf-8-sig"))):
+        row = {key: raw.get(label, "") for key, label in hospital_cols.items()}
+        zip5 = (row["zip"] or "")[:5]
+        if zip5 not in zcta:
+            hospital_skipped += 1
+            continue
+        lat, lon = zcta[zip5]
+        rows.append([
+            row["id"], row["name"].title(), row["city"].title(), row["state"], zip5, round(lat, 4), round(lon, 4),
+            0, 8 if row["emergency"].strip().lower() == "yes" else 0, county_fips(row["state"], row["county"]), "h",
+        ])
+        hospital_count += 1
+    print(f"{hospital_count} hospitals; skipped {hospital_skipped} without ZIP match")
+
     payload = {
-        "source": "CMS Provider Data Catalog, Dialysis Facility - Listing by Facility (23ew-n7w9)",
-        "source_url": "https://data.cms.gov/provider-data/dataset/23ew-n7w9",
+        "source": "CMS Provider Data Catalog: Dialysis Facility listing (23ew-n7w9) and Hospital General Information (xubh-q36u)",
+        "source_url": "https://data.cms.gov/provider-data/topics/dialysis-facilities",
         "cms_modified": modified,
         "location_note": "Coordinates are ZIP-code centroids from the US Census Gazetteer, not street addresses.",
-        "fields": ["ccn", "name", "city", "state", "zip", "lat", "lon", "stations", "services", "county_fips"],
-        "services_bits": {"1": "in-center hemodialysis", "2": "peritoneal dialysis", "4": "home hemodialysis training"},
+        "fields": ["ccn", "name", "city", "state", "zip", "lat", "lon", "stations", "services", "county_fips", "kind"],
+        "services_bits": {"1": "in-center hemodialysis", "2": "peritoneal dialysis", "4": "home hemodialysis training", "8": "emergency services (hospitals)"}, "kinds": {"d": "dialysis facility", "h": "hospital"},
         "facilities": rows,
     }
     with open(OUT, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, separators=(",", ":"))
     states = Counter(r[3] for r in rows)
-    print(f"{len(rows)} facilities, {len(states)} states/territories; skipped {missing_geo} without ZIP match; {missing_county} without county FIPS")
+    print(f"{len(rows)} total records, {len(states)} states/territories; skipped {missing_geo} without ZIP match; {missing_county} without county FIPS")
 
 
 if __name__ == "__main__":

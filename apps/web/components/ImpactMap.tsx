@@ -3,10 +3,11 @@ import "leaflet/dist/leaflet.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as Leaflet from "leaflet";
 import {
-  byCounty, distanceMiles, loadFacilities, nearestAlternatives, totalStations,
-  IN_CENTER_HD, type Facility, type FacilityDataset,
+  byCounty, countByKind, distanceMiles, facilityKey, loadFacilities, nearestAlternatives, totalStations,
+  IN_CENTER_HD, EMERGENCY_SERVICES, type Facility, type FacilityDataset, type FacilityKind,
 } from "../lib/facilities";
 import { alertImpacts, fetchWeatherAlerts, type AlertImpact, type WeatherAlert } from "../lib/nws";
+import { requestBrief, type AiBrief } from "../lib/brief";
 
 type Scenario = {
   kind: "nws" | "simulated";
@@ -17,7 +18,9 @@ type Scenario = {
 };
 
 const SIMULATION_RADIUS_MILES = 25;
+const KIND_COLOR: Record<FacilityKind, string> = { dialysis: "#0b6b73", hospital: "#2b5fc7" };
 const nf = new Intl.NumberFormat("en-US");
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 function popupContent(facility: Facility): HTMLElement {
   const root = document.createElement("div");
@@ -26,7 +29,10 @@ function popupContent(facility: Facility): HTMLElement {
   const line = document.createElement("div");
   line.textContent = `${facility.city}, ${facility.state} ${facility.zip}`;
   const meta = document.createElement("div");
-  meta.textContent = `${facility.stations} dialysis stations`;
+  meta.textContent =
+    facility.kind === "dialysis"
+      ? `Dialysis facility · ${facility.stations} stations`
+      : `Hospital · ${(facility.services & EMERGENCY_SERVICES) === EMERGENCY_SERVICES ? "emergency services" : "no emergency services listed"}`;
   const note = document.createElement("small");
   note.textContent = "Location is approximate (ZIP-code centre). Directory listing, not live availability.";
   root.append(title, line, meta, note);
@@ -38,6 +44,7 @@ export function ImpactMap() {
   const leaflet = useRef<typeof Leaflet | null>(null);
   const map = useRef<Leaflet.Map | null>(null);
   const overlay = useRef<Leaflet.LayerGroup | null>(null);
+  const kindLayers = useRef<Record<FacilityKind, Leaflet.LayerGroup | null>>({ dialysis: null, hospital: null });
 
   const [dataset, setDataset] = useState<FacilityDataset | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -46,15 +53,31 @@ export function ImpactMap() {
   const [selected, setSelected] = useState<Facility | null>(null);
   const [scenario, setScenario] = useState<Scenario | null>(null);
   const [decision, setDecision] = useState<"" | "approved" | "rejected">("");
+  const [show, setShow] = useState<Record<FacilityKind, boolean>>({ dialysis: true, hospital: true });
+  const [brief, setBrief] = useState<AiBrief | null>(null);
+  const [briefState, setBriefState] = useState<"idle" | "loading" | "error">("idle");
+  const [briefError, setBriefError] = useState("");
 
   const index = useMemo(() => (dataset ? byCounty(dataset.facilities) : null), [dataset]);
   const impacts: AlertImpact[] = useMemo(
     () => (alerts && index ? alertImpacts(alerts, index) : []),
     [alerts, index],
   );
-  const alternatives = useMemo(
-    () => (dataset && scenario ? nearestAlternatives(dataset.facilities, scenario.facilities) : []),
+  const dialysisAlternatives = useMemo(
+    () => (dataset && scenario ? nearestAlternatives(dataset.facilities, scenario.facilities, "dialysis") : []),
     [dataset, scenario],
+  );
+  const hospitalAlternatives = useMemo(
+    () => (dataset && scenario ? nearestAlternatives(dataset.facilities, scenario.facilities, "hospital", 3) : []),
+    [dataset, scenario],
+  );
+  const alternatives = useMemo(() => [...dialysisAlternatives, ...hospitalAlternatives], [dialysisAlternatives, hospitalAlternatives]);
+  const counts = useMemo(
+    () => ({
+      dialysis: dataset ? countByKind(dataset.facilities, "dialysis") : 0,
+      hospital: dataset ? countByKind(dataset.facilities, "hospital") : 0,
+    }),
+    [dataset],
   );
 
   // Load the official facility directory and live NWS alerts.
@@ -67,7 +90,7 @@ export function ImpactMap() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // Create the map and the base layer of every facility once the data is ready.
+  // Create the map and one base layer per facility kind once the data is ready.
   useEffect(() => {
     if (!dataset || !mapEl.current || map.current) return;
     let cancelled = false;
@@ -80,21 +103,41 @@ export function ImpactMap() {
         attribution: "© OpenStreetMap contributors",
       }).addTo(instance);
       const renderer = L.canvas({ padding: 0.5 });
+      const groups: Record<FacilityKind, Leaflet.LayerGroup> = { dialysis: L.layerGroup(), hospital: L.layerGroup() };
       for (const facility of dataset.facilities) {
         L.circleMarker([facility.lat, facility.lon], {
-          renderer, radius: 3, weight: 0, fillColor: "#0b6b73", fillOpacity: 0.55,
+          renderer,
+          radius: facility.kind === "hospital" ? 3.5 : 3,
+          weight: 0,
+          fillColor: KIND_COLOR[facility.kind],
+          fillOpacity: 0.55,
         })
           .bindPopup(() => popupContent(facility))
           .on("click", () => setSelected(facility))
-          .addTo(instance);
+          .addTo(groups[facility.kind]);
       }
+      groups.dialysis.addTo(instance);
+      groups.hospital.addTo(instance);
+      kindLayers.current = groups;
       overlay.current = L.layerGroup().addTo(instance);
       map.current = instance;
     });
     return () => { cancelled = true; };
   }, [dataset]);
 
-  // Draw the highlighted scenario on top of the base layer.
+  // Layer toggles.
+  useEffect(() => {
+    const instance = map.current;
+    if (!instance) return;
+    for (const kind of ["dialysis", "hospital"] as FacilityKind[]) {
+      const group = kindLayers.current[kind];
+      if (!group) continue;
+      if (show[kind] && !instance.hasLayer(group)) group.addTo(instance);
+      if (!show[kind] && instance.hasLayer(group)) instance.removeLayer(group);
+    }
+  }, [show, dataset]);
+
+  // Draw the highlighted scenario on top of the base layers.
   useEffect(() => {
     const L = leaflet.current;
     const group = overlay.current;
@@ -124,9 +167,16 @@ export function ImpactMap() {
 
   useEffect(() => () => { map.current?.remove(); map.current = null; }, []);
 
-  function chooseAlert(impact: AlertImpact) {
+  function open(next: Scenario) {
     setDecision("");
-    setScenario({ kind: "nws", title: impact.alert.event, alert: impact.alert, facilities: impact.facilities });
+    setBrief(null);
+    setBriefState("idle");
+    setBriefError("");
+    setScenario(next);
+  }
+
+  function chooseAlert(impact: AlertImpact) {
+    open({ kind: "nws", title: impact.alert.event, alert: impact.alert, facilities: impact.facilities });
   }
 
   function simulate(origin: Facility) {
@@ -134,38 +184,57 @@ export function ImpactMap() {
     const nearby = dataset.facilities.filter(
       (f) => distanceMiles(origin.lat, origin.lon, f.lat, f.lon) <= SIMULATION_RADIUS_MILES,
     );
-    setDecision("");
-    setScenario({ kind: "simulated", title: `Simulated outage near ${origin.city}, ${origin.state}`, origin, facilities: nearby });
+    open({ kind: "simulated", title: `Simulated outage near ${origin.city}, ${origin.state}`, origin, facilities: nearby });
+  }
+
+  async function askAi() {
+    if (!scenario) return;
+    setBriefState("loading");
+    try {
+      setBrief(await requestBrief(scenario, alternatives));
+      setBriefState("idle");
+    } catch (reason) {
+      setBriefError(reason instanceof Error ? reason.message : "The AI briefing is unavailable right now.");
+      setBriefState("error");
+    }
   }
 
   const stations = scenario ? totalStations(scenario.facilities) : 0;
-  const inCenter = scenario ? scenario.facilities.filter((f) => (f.services & IN_CENTER_HD) === IN_CENTER_HD).length : 0;
+  const dialysisHit = scenario ? countByKind(scenario.facilities, "dialysis") : 0;
+  const hospitalHit = scenario ? countByKind(scenario.facilities, "hospital") : 0;
+  const inCenter = scenario ? scenario.facilities.filter((f) => f.kind === "dialysis" && (f.services & IN_CENTER_HD) === IN_CENTER_HD).length : 0;
 
   return (
     <div className="impact">
       <div className="impact-map-col">
         <div className="impact-stats" aria-live="polite">
-          <div><strong>{dataset ? nf.format(dataset.facilities.length) : "…"}</strong><span>US dialysis facilities</span></div>
-          <div><strong>{dataset ? nf.format(totalStations(dataset.facilities)) : "…"}</strong><span>dialysis stations (chairs)</span></div>
+          <div><strong>{dataset ? nf.format(counts.dialysis) : "…"}</strong><span>dialysis facilities</span></div>
+          <div><strong>{dataset ? nf.format(counts.hospital) : "…"}</strong><span>hospitals</span></div>
           <div>
             <strong>{alertsError ? "n/a" : alerts ? impacts.length : "…"}</strong>
             <span>live weather alerts touching them</span>
           </div>
         </div>
-        <div className="impact-map" ref={mapEl} role="region" aria-label="Map of US dialysis facilities and live weather alerts">
+        <div className="impact-map" ref={mapEl} role="region" aria-label="Map of US dialysis facilities and hospitals with live weather alerts">
           {!dataset && !loadError && <p className="map-loading" aria-busy="true">Loading the national facility directory…</p>}
           {loadError && <p className="notice" role="alert">{loadError}</p>}
         </div>
-        <ul className="legend" aria-label="Map legend">
-          <li><i className="dot dot-teal" /> Dialysis facility</li>
-          <li><i className="dot dot-red" /> Possibly affected</li>
-          <li><i className="dot dot-green" /> Nearest in-center alternatives</li>
-        </ul>
+        <div className="legend-row">
+          <fieldset className="layer-toggles">
+            <legend className="sr-only">Show on map</legend>
+            <label><input type="checkbox" checked={show.dialysis} onChange={(e) => setShow({ ...show, dialysis: e.target.checked })} /> <i className="dot dot-teal" /> Dialysis</label>
+            <label><input type="checkbox" checked={show.hospital} onChange={(e) => setShow({ ...show, hospital: e.target.checked })} /> <i className="dot dot-blue" /> Hospitals</label>
+          </fieldset>
+          <ul className="legend" aria-label="Map legend">
+            <li><i className="dot dot-red" /> Possibly affected</li>
+            <li><i className="dot dot-green" /> Nearest alternatives</li>
+          </ul>
+        </div>
         <p className="hint">
-          Source: <a href={dataset?.sourceUrl ?? "https://data.cms.gov/provider-data/dataset/23ew-n7w9"} target="_blank" rel="noreferrer">CMS Dialysis Facility listing</a>
+          Sources: <a href={dataset?.sourceUrl ?? "https://data.cms.gov/provider-data/"} target="_blank" rel="noreferrer">CMS dialysis and hospital directories</a>
           {dataset?.cmsModified ? ` (updated ${dataset.cmsModified})` : ""} and live alerts from the{" "}
           <a href="https://www.weather.gov/documentation/services-web-api" target="_blank" rel="noreferrer">National Weather Service</a>.
-          Pins sit at the centre of each facility&rsquo;s ZIP code, not its street address.
+          Pins sit at the centre of each facility&rsquo;s ZIP code, not its street address. Pharmacies are not included: there is no open national official dataset.
         </p>
       </div>
 
@@ -178,7 +247,7 @@ export function ImpactMap() {
             </p>
             {alertsError && <p className="notice" role="alert">Live weather alerts are temporarily unavailable.</p>}
             {!alerts && !alertsError && <p aria-busy="true">Checking the National Weather Service…</p>}
-            {alerts && impacts.length === 0 && <p className="empty">No active alerts currently touch a dialysis facility.</p>}
+            {alerts && impacts.length === 0 && <p className="empty">No active alerts currently touch a listed facility.</p>}
             <ul className="alert-list">
               {impacts.slice(0, 8).map((impact) => (
                 <li key={impact.alert.id}>
@@ -187,7 +256,7 @@ export function ImpactMap() {
                     <strong>{impact.alert.event}</strong>
                     <span className="alert-area">{impact.alert.areaDesc.split(";").slice(0, 3).join(", ")}</span>
                     <span className="alert-count">
-                      {nf.format(impact.facilities.length)} facilities · {nf.format(totalStations(impact.facilities))} stations
+                      {nf.format(countByKind(impact.facilities, "dialysis"))} dialysis · {nf.format(countByKind(impact.facilities, "hospital"))} hospitals
                     </span>
                   </button>
                 </li>
@@ -248,12 +317,12 @@ export function ImpactMap() {
                 <div>
                   <strong>Who could be affected</strong>
                   <p>
-                    <b>{nf.format(scenario.facilities.length)}</b> {scenario.facilities.length === 1 ? "facility" : "facilities"} with{" "}
-                    <b>{nf.format(stations)}</b> dialysis {stations === 1 ? "station" : "stations"} (
-                    {inCenter} {inCenter === 1 ? "offers" : "offer"} in-center treatment) {scenario.facilities.length === 1 ? "lies" : "lie"} in the area.
+                    <b>{nf.format(dialysisHit)}</b> dialysis {plural(dialysisHit, "facility", "facilities")} with{" "}
+                    <b>{nf.format(stations)}</b> {plural(stations, "station", "stations")} ({inCenter} offer in-center treatment) and{" "}
+                    <b>{nf.format(hospitalHit)}</b> {plural(hospitalHit, "hospital", "hospitals")} lie in the area.
                   </p>
                   <ul className="mini-list">
-                    {scenario.facilities.slice(0, 4).map((f) => <li key={f.ccn}>{f.name}, {f.city}</li>)}
+                    {scenario.facilities.slice(0, 4).map((f) => <li key={facilityKey(f)}>{f.name}, {f.city}</li>)}
                     {scenario.facilities.length > 4 && <li>+ {scenario.facilities.length - 4} more (red dots)</li>}
                   </ul>
                 </div>
@@ -261,23 +330,39 @@ export function ImpactMap() {
               <li>
                 <span className="flow-num">4</span>
                 <div>
-                  <strong>A human decides</strong>
-                  <p>Draft for coordinator review (generated from the directory in this demo):</p>
-                  <blockquote>
-                    Call {scenario.facilities.length === 1 ? "the facility" : `all ${nf.format(scenario.facilities.length)} facilities`} to confirm {scenario.facilities.length === 1 ? "it is" : "they are"} open and staffed.
-                    {alternatives.length > 0 && <> If any are closed, offer nearby in-center options such as {alternatives.slice(0, 3).map((a) => `${a.facility.name} (${Math.round(a.miles)} mi)`).join(", ")}.</>}
-                    {" "}Do not promise appointments or capacity.
-                  </blockquote>
-                  {decision === "" ? (
-                    <div className="decision">
-                      <button type="button" onClick={() => setDecision("approved")}>Approve</button>
-                      <button type="button" className="button-ghost" onClick={() => setDecision("rejected")}>Reject</button>
-                    </div>
-                  ) : (
-                    <p className="note" role="status">
-                      {decision === "approved" ? "Approved." : "Rejected."} In the real system this writes an audit record.
-                      Nothing is sent to anyone automatically, and nothing was sent here.
+                  <strong>AI drafts, a human decides</strong>
+                  {alternatives.length > 0 && (
+                    <p className="hint">
+                      Nearest alternatives (green): {alternatives.slice(0, 3).map((a) => `${a.facility.name} (${Math.round(a.miles)} mi)`).join("; ")}.
                     </p>
+                  )}
+                  {!brief && briefState !== "loading" && (
+                    <button type="button" onClick={askAi}>Ask the AI investigator for a brief</button>
+                  )}
+                  {briefState === "loading" && <p aria-busy="true">An NVIDIA model on Nebius is drafting a brief…</p>}
+                  {briefState === "error" && <p className="notice" role="alert">{briefError}</p>}
+                  {brief && (
+                    <>
+                      <blockquote>
+                        <p>{brief.summary}</p>
+                        <ul className="mini-list">
+                          {brief.priorityActions.map((action) => <li key={action}>{action}</li>)}
+                        </ul>
+                        <p><em>Not yet known: {brief.caveat}</em></p>
+                        <small>Drafted by {brief.modelId} via Nebius Token Factory. A draft, not a fact.</small>
+                      </blockquote>
+                      {decision === "" ? (
+                        <div className="decision">
+                          <button type="button" onClick={() => setDecision("approved")}>Approve</button>
+                          <button type="button" className="button-ghost" onClick={() => setDecision("rejected")}>Reject</button>
+                        </div>
+                      ) : (
+                        <p className="note" role="status">
+                          {decision === "approved" ? "Approved." : "Rejected."} In the real system this writes an audit record.
+                          Nothing is sent to anyone automatically, and nothing was sent here.
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               </li>

@@ -215,3 +215,12 @@ blockquote { margin: 8px 0; padding: 10px 12px; background: #f4f8f7; border-left
 .decision button { padding: 8px 18px; }
 .leaflet-popup-content { font: 400 .9rem Inter, "Segoe UI", sans-serif; }
 @media (max-width: 640px) { .impact-stats { grid-template-columns: 1fr; } .impact-map { height: 420px; } }
+.dot-blue { background: #2b5fc7; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.legend-row { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; margin: 10px 0 6px; }
+.legend-row .legend { margin: 0; }
+.layer-toggles { border: 0; padding: 0; margin: 0; display: flex; gap: 18px; }
+.layer-toggles label { margin: 0; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+.layer-toggles input { padding: 0; width: 16px; height: 16px; }
+blockquote p { margin: 0 0 .5em; }
+blockquote small { color: var(--muted); }

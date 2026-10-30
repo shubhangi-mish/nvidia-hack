@@ -1,6 +1,9 @@
 import hashlib
+import json
 import os
 import secrets
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Annotated
@@ -12,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 import psycopg
 from psycopg.rows import dict_row
 from .sources import OfficialEvent
-from .nebius import NebiusNotConfigured, investigate, smoke_test
+from .nebius import NebiusNotConfigured, brief, investigate, smoke_test
 
 app = FastAPI(title="LASTLINE API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=[value for value in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",") if value], allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Idempotency-Key", "tracking-token", "x-source-ingest-token", "x-operations-token"])
@@ -125,6 +128,54 @@ def ingest_official_event(event: OfficialEvent) -> tuple[UUID, bool]:
         cursor.execute("INSERT INTO incidents (id, type, summary, verification_status, lifecycle_state, first_seen, updated_at, public_visibility, source_event_key) VALUES (%s, %s, %s, 'officially_confirmed', 'received', %s, %s, true, %s)", (incident_id, event.event_type, event.description, now, now, event.dedupe_key))
         cursor.execute("INSERT INTO case_events (incident_id, actor, event_type, timestamp, payload_redacted) VALUES (%s, %s, 'official_event_received', %s, '{}'::jsonb)", (incident_id, event.source_id, now))
     return incident_id, True
+
+class BriefRequest(BaseModel):
+    """Aggregate scenario facts only; no personal data is accepted."""
+    source: str = Field(max_length=80)
+    event: str = Field(max_length=120)
+    severity: str = Field(default="Unknown", max_length=20)
+    area: str = Field(max_length=240)
+    dialysis_facilities: int = Field(ge=0, le=20000)
+    dialysis_stations: int = Field(ge=0, le=200000)
+    hospitals: int = Field(ge=0, le=20000)
+    sample_facilities: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=5)
+    nearest_alternatives: list[Annotated[str, Field(max_length=140)]] = Field(default_factory=list, max_length=4)
+
+_brief_calls: dict[str, deque] = defaultdict(deque)
+_brief_global: deque = deque()
+
+def _allow_brief(client: str) -> bool:
+    """Best-effort limiter (per warm instance): protects the demo's model credits from casual abuse."""
+    now = time.time()
+    per_client, overall = _brief_calls[client], _brief_global
+    for queue, window in ((per_client, 600), (overall, 3600)):
+        while queue and now - queue[0] > window:
+            queue.popleft()
+    if len(per_client) >= int(os.getenv("BRIEF_LIMIT_PER_10_MIN", "6")) or len(overall) >= int(os.getenv("BRIEF_LIMIT_PER_HOUR", "150")):
+        return False
+    per_client.append(now)
+    overall.append(now)
+    return True
+
+@app.post("/v1/demo/brief")
+def demo_brief(request: BriefRequest, x_forwarded_for: Annotated[str | None, Header()] = None):
+    """Public, read-only: drafts a coordinator briefing for a scenario. It takes no action and writes nothing."""
+    client = (x_forwarded_for or "unknown").split(",")[0].strip()
+    if not _allow_brief(client):
+        raise HTTPException(429, "Briefing limit reached for this demo. Please try again later.")
+    try:
+        result = brief(request.model_dump())
+    except NebiusNotConfigured as exc:
+        raise HTTPException(503, "AI briefing is not configured") from exc
+    except Exception as exc:
+        raise HTTPException(502, "The AI briefing could not be generated") from exc
+    try:
+        parsed = json.loads(result["content"])
+        actions = [str(item)[:200] for item in parsed.get("priority_actions", [])][:3]
+        draft = {"summary": str(parsed.get("summary", ""))[:500], "priority_actions": actions, "caveat": str(parsed.get("caveat", ""))[:300]}
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(502, "The AI briefing was not in the expected format") from exc
+    return {"model_id": result["model_id"], "provider": "Nebius Token Factory", "draft": draft, "external_action_executed": False}
 
 @app.get("/healthz")
 def healthz():
