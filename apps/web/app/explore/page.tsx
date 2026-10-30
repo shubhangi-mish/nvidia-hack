@@ -1,12 +1,49 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-type Incident = { id: string; summary: string; verification_status: string; first_seen: string };
+import { fetchIncidents, type Incident } from "../../lib/api";
+import { StatusBadge } from "../../components/StatusBadge";
+
 export default function Explore() {
-  const [items, setItems] = useState<Incident[]>([]); const [error, setError] = useState("");
+  const [items, setItems] = useState<Incident[] | null>(null);
+  const [error, setError] = useState("");
+
   useEffect(() => {
-    const load = () => fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"}/v1/incidents`).then(r => r.ok ? r.json() : Promise.reject()).then((data) => { setItems(data); setError(""); }).catch(() => setError("Incident information is currently unavailable."));
-    load(); const timer = window.setInterval(load, 30_000); return () => window.clearInterval(timer);
+    const load = () =>
+      fetchIncidents()
+        .then((data) => { setItems(data); setError(""); })
+        .catch(() => setError("Incident information is currently unavailable."));
+    load();
+    const timer = window.setInterval(load, 30_000);
+    return () => window.clearInterval(timer);
   }, []);
-  return <main><nav><Link href="/">LASTLINE</Link><Link href="/report">Report a problem</Link></nav><h1>Explore reports</h1><p>Reports are not verified by volume. Each status is shown plainly.</p>{error && <p role="alert">{error}</p>}{!error && items.length === 0 && <p>No public incidents are available yet.</p>}<section aria-label="Incident list">{items.map(item => <article className="incident-card" key={item.id}><p className="eyebrow">{item.verification_status.replaceAll("_", " ")}</p><p>{item.summary}</p><small>Received {new Date(item.first_seen).toLocaleString()}</small><p><Link href={`/incidents/${item.id}`}>View status</Link></p></article>)}</section></main>;
+
+  return (
+    <main className="container page">
+      <p className="eyebrow">Public incidents</p>
+      <h1 className="h1-small">Explore reports</h1>
+      <p className="lede narrow">
+        Reports are never verified by volume. Each one shows its status plainly, so you can tell a lead from a
+        confirmed disruption.
+      </p>
+      {error && <p className="notice" role="alert">{error}</p>}
+      {!error && items === null && <p aria-busy="true">Loading…</p>}
+      {!error && items?.length === 0 && (
+        <div className="empty">
+          <p><strong>No public incidents are available yet.</strong></p>
+          <p>Have you seen a barrier to care? <Link href="/report">Report it</Link>.</p>
+        </div>
+      )}
+      <section aria-label="Incident list">
+        {items?.map((item) => (
+          <article className="incident-card" key={item.id}>
+            <StatusBadge status={item.verification_status} />
+            <p>{item.summary}</p>
+            <small>Received {new Date(item.first_seen).toLocaleString()}</small>
+            <p><Link href={`/incidents/${item.id}`}>View status</Link></p>
+          </article>
+        ))}
+      </section>
+    </main>
+  );
 }

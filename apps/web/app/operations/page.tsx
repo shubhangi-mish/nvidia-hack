@@ -1,2 +1,29 @@
 import Link from "next/link";
-export default function Operations() { return <main><nav><Link href="/">LASTLINE</Link><strong>Coordinator operations</strong></nav><h1>Operations dashboard</h1><p>This workspace requires coordinator authorization. It never sends external messages or publishes urgent alerts automatically.</p><section className="incident-card"><h2>System state</h2><dl><dt>Incident review</dt><dd>Use the API with an authorized operations token.</dd><dt>AI investigation</dt><dd>Nebius credentials required; no substitute model is used.</dd><dt>Outbound actions</dt><dd>Proposal and human approval only.</dd></dl></section><p><Link className="button" href="/explore">Open public incident list</Link></p></main>; }
+
+const guardrails = [
+  { label: "Incident review", value: "Use the API with an authorized operations token." },
+  { label: "AI investigation", value: "Requires Nebius credentials. No substitute model is ever used." },
+  { label: "Outbound actions", value: "Proposal and human approval only. Nothing is sent automatically." },
+];
+
+export default function Operations() {
+  return (
+    <main className="container page narrow-page">
+      <p className="eyebrow">Coordinator operations</p>
+      <h1 className="h1-small">Operations dashboard</h1>
+      <p className="lede">
+        This workspace requires coordinator authorization. It never sends external messages or publishes urgent alerts
+        automatically.
+      </p>
+      <section className="card">
+        <h2 className="h2-flush">System guardrails</h2>
+        <dl className="facts">
+          {guardrails.map((item) => (
+            <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>
+          ))}
+        </dl>
+      </section>
+      <p><Link className="button" href="/explore">Open public incident list</Link></p>
+    </main>
+  );
+}
