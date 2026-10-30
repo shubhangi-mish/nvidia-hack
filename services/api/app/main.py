@@ -75,6 +75,13 @@ class SourceSyncUpdate(BaseModel):
     records_created: int = Field(ge=0)
     error_redacted: str | None = Field(default=None, max_length=500)
 
+class FacilityImport(BaseModel):
+    official_id: str = Field(min_length=2, max_length=40)
+    name: str = Field(min_length=2, max_length=300)
+    address: str = Field(min_length=5, max_length=500)
+    capabilities: list[str] = []
+    source_url: str
+
 def _require_operations_token(token: str | None) -> None:
     expected = os.getenv("OPERATIONS_TOKEN")
     if not expected:
@@ -175,6 +182,24 @@ def record_source_sync(update: SourceSyncUpdate, x_source_ingest_token: Annotate
         cursor.execute("INSERT INTO source_sync_runs (source_id, status, records_seen, records_created, error_redacted, finished_at) VALUES (%s, %s, %s, %s, %s, now()) RETURNING id", (update.source_id, update.status, update.records_seen, update.records_created, update.error_redacted))
         sync_id = cursor.fetchone()["id"]
     return {"sync_id": sync_id, "status": update.status}
+
+@app.post("/v1/internal/facilities", status_code=201)
+def import_facility(facility: FacilityImport, x_source_ingest_token: Annotated[str | None, Header()] = None):
+    configured_token = os.getenv("SOURCE_INGEST_TOKEN")
+    if not configured_token or not x_source_ingest_token or not secrets.compare_digest(configured_token, x_source_ingest_token): raise HTTPException(403, "Invalid source ingestion credentials")
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT id FROM facilities WHERE official_id = %s", (facility.official_id,)); existing = cursor.fetchone()
+        if existing: return {"facility_id": existing["id"], "created": False}
+        cursor.execute("INSERT INTO places (name, address, source_id) VALUES (%s, %s, 'cms_dialysis') RETURNING id", (facility.name, facility.address)); place_id = cursor.fetchone()["id"]
+        cursor.execute("INSERT INTO facilities (place_id, facility_type, official_id, source) VALUES (%s, 'dialysis', %s, 'CMS Provider Data') RETURNING id", (place_id, facility.official_id)); facility_id = cursor.fetchone()["id"]
+        for capability in facility.capabilities: cursor.execute("INSERT INTO services (facility_id, capability) VALUES (%s, %s) ON CONFLICT DO NOTHING", (facility_id, capability))
+    return {"facility_id": facility_id, "created": True}
+
+@app.get("/v1/facilities")
+def list_facilities(limit: int = 100):
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT f.id, p.name, p.address, f.facility_type, f.official_id, f.source, array_remove(array_agg(s.capability), NULL) AS capabilities FROM facilities f JOIN places p ON p.id=f.place_id LEFT JOIN services s ON s.facility_id=f.id GROUP BY f.id,p.id ORDER BY p.name LIMIT %s", (max(1, min(limit, 200)),))
+        return {"facilities": cursor.fetchall(), "caveat": "Directory listing only; capacity, appointments, stock, insurance, and current accessibility are unknown unless separately verified."}
 
 @app.get("/v1/operations/sources")
 def source_health(x_operations_token: Annotated[str | None, Header()] = None):
