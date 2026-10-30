@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 import psycopg
 from psycopg.rows import dict_row
 from .sources import OfficialEvent
-from .nebius import NebiusNotConfigured, smoke_test
+from .nebius import NebiusNotConfigured, investigate, smoke_test
 
 app = FastAPI(title="LASTLINE API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=[value for value in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if value], allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Idempotency-Key", "tracking-token", "x-source-ingest-token", "x-operations-token"])
@@ -215,6 +215,28 @@ def nebius_smoke(x_operations_token: Annotated[str | None, Header()] = None):
     try: return smoke_test()
     except NebiusNotConfigured as exc: raise HTTPException(503, str(exc)) from exc
     except Exception as exc: raise HTTPException(502, "Nebius smoke test failed") from exc
+
+@app.post("/v1/operations/incidents/{incident_id}/investigate", status_code=202)
+def investigate_incident(incident_id: UUID, x_operations_token: Annotated[str | None, Header()] = None):
+    _require_operations_token(x_operations_token)
+    run_id = uuid4()
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT payload_json FROM raw_events re JOIN incident_reports ir ON ir.raw_event_id = re.id WHERE ir.incident_id = %s ORDER BY re.received_at DESC LIMIT 1", (incident_id,))
+        row = cursor.fetchone()
+        if not row: raise HTTPException(404, "No citizen report is available for this incident")
+        report = row["payload_json"].get("description", "")
+        cursor.execute("INSERT INTO agent_runs (id, incident_id, workflow_version, model_id, state) VALUES (%s, %s, 'bounded-v1', %s, 'running')", (run_id, incident_id, os.getenv("NEBIUS_NVIDIA_MODEL_ID")))
+    try:
+        result = investigate(report, [])
+        with _connection() as connection, connection.cursor() as cursor:
+            cursor.execute("INSERT INTO agent_tool_calls (run_id, tool, input_redacted, output_ref, duration_ms, status) VALUES (%s, 'nebius_investigate', '{}'::jsonb, %s, 0, 'succeeded')", (run_id, result["response_id"]))
+            cursor.execute("UPDATE agent_runs SET state = 'completed', finished_at = now() WHERE id = %s", (run_id,))
+            cursor.execute("INSERT INTO case_events (incident_id, actor, event_type, payload_redacted) VALUES (%s, 'agent', 'investigation_draft_ready', '{}'::jsonb)", (incident_id,))
+        return {"run_id": run_id, "state": "completed", "model_id": result["model_id"], "draft": result["draft"]}
+    except Exception as exc:
+        with _connection() as connection, connection.cursor() as cursor:
+            cursor.execute("UPDATE agent_runs SET state = 'failed', finished_at = now(), error_redacted = 'Model investigation failed' WHERE id = %s", (run_id,))
+        raise HTTPException(502, "Investigation failed; no claim was changed") from exc
 
 @app.get("/v1/incidents/{incident_id}", response_model=PublicIncident)
 def get_incident(incident_id: UUID):
