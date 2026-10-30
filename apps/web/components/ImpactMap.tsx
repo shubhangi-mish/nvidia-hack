@@ -44,6 +44,8 @@ export function ImpactMap() {
   const leaflet = useRef<typeof Leaflet | null>(null);
   const map = useRef<Leaflet.Map | null>(null);
   const overlay = useRef<Leaflet.LayerGroup | null>(null);
+  // One shared canvas for every layer: a second canvas on top would swallow clicks meant for the base facilities.
+  const renderer = useRef<Leaflet.Canvas | null>(null);
   const kindLayers = useRef<Record<FacilityKind, Leaflet.LayerGroup | null>>({ dialysis: null, hospital: null });
 
   const [dataset, setDataset] = useState<FacilityDataset | null>(null);
@@ -102,11 +104,11 @@ export function ImpactMap() {
         maxZoom: 18,
         attribution: "© OpenStreetMap contributors",
       }).addTo(instance);
-      const renderer = L.canvas({ padding: 0.5 });
+      renderer.current = L.canvas({ padding: 0.5 });
       const groups: Record<FacilityKind, Leaflet.LayerGroup> = { dialysis: L.layerGroup(), hospital: L.layerGroup() };
       for (const facility of dataset.facilities) {
         L.circleMarker([facility.lat, facility.lon], {
-          renderer,
+          renderer: renderer.current,
           radius: facility.kind === "hospital" ? 3.5 : 3,
           weight: 0,
           fillColor: KIND_COLOR[facility.kind],
@@ -148,17 +150,17 @@ export function ImpactMap() {
     const bounds = L.latLngBounds([]);
     if (scenario.kind === "simulated" && scenario.origin) {
       L.circle([scenario.origin.lat, scenario.origin.lon], {
-        radius: SIMULATION_RADIUS_MILES * 1609.34, color: "#c8321f", weight: 2, fillColor: "#c8321f", fillOpacity: 0.08,
+        radius: SIMULATION_RADIUS_MILES * 1609.34, renderer: renderer.current ?? undefined, color: "#c8321f", weight: 2, fillColor: "#c8321f", fillOpacity: 0.08,
       }).addTo(group);
       bounds.extend([scenario.origin.lat, scenario.origin.lon]);
     }
     for (const facility of scenario.facilities) {
-      L.circleMarker([facility.lat, facility.lon], { radius: 7, color: "#fff", weight: 1.5, fillColor: "#c8321f", fillOpacity: 0.95 })
+      L.circleMarker([facility.lat, facility.lon], { renderer: renderer.current ?? undefined, radius: 7, color: "#fff", weight: 1.5, fillColor: "#c8321f", fillOpacity: 0.95 })
         .bindPopup(() => popupContent(facility)).addTo(group);
       bounds.extend([facility.lat, facility.lon]);
     }
     for (const { facility } of alternatives) {
-      L.circleMarker([facility.lat, facility.lon], { radius: 8, color: "#fff", weight: 2, fillColor: "#1d8a4a", fillOpacity: 1 })
+      L.circleMarker([facility.lat, facility.lon], { renderer: renderer.current ?? undefined, radius: 8, color: "#fff", weight: 2, fillColor: "#1d8a4a", fillOpacity: 1 })
         .bindPopup(() => popupContent(facility)).addTo(group);
       bounds.extend([facility.lat, facility.lon]);
     }

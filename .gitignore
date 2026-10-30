@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 *.tsbuildinfo
 next-dev*.log
+
+# demo recording artifacts
+demo-video/
