@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { HeroIllustration } from "../components/HeroIllustration";
+import { ImpactMap } from "../components/ImpactMap";
 import { LiveIncidentBoard } from "../components/LiveIncidentBoard";
 import {
   ArrowRightIcon, BuildingIcon, CloudIcon, EyeOffIcon, HandIcon, LockIcon,
@@ -40,7 +41,7 @@ export default function Home() {
             </p>
             <div className="actions">
               <Link className="button" href="/report">Report a problem <ArrowRightIcon size={18} /></Link>
-              <Link className="button button-ghost" href="#live">See the live board</Link>
+              <Link className="button button-ghost" href="#map">See it working</Link>
             </div>
             <ul className="trust-row" aria-label="Principles">
               <li><LockIcon size={18} /> Anonymous, no account</li>
@@ -49,6 +50,18 @@ export default function Home() {
             </ul>
           </div>
           <HeroIllustration />
+        </div>
+      </section>
+
+      <section className="section section-tint" id="map" aria-labelledby="map-title">
+        <div className="container">
+          <p className="eyebrow">See it working · real data</p>
+          <h2 id="map-title">Every dialysis facility in the US, and what is happening around them right now.</h2>
+          <p className="lede narrow">
+            This map uses the official CMS directory of Medicare dialysis facilities and live National Weather Service
+            alerts. Pick an alert, or simulate an outage, and watch how LASTLINE turns a signal into a reviewed decision.
+          </p>
+          <ImpactMap />
         </div>
       </section>
 

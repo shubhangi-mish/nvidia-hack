@@ -40,3 +40,7 @@ Official source ingestion is protected by `SOURCE_INGEST_TOKEN`. Milestone 2 cur
 `services/worker/nws_poll.py` is the bounded one-shot NWS polling entry point. Run it only from an approved scheduler after setting its API URL and ingestion token; it reads the official NWS active-alert feed and sends the source record through the same intake endpoint.
 
 See [deployment instructions](docs/deployment.md) for the Vercel-only demo path. The coordinator endpoints require `OPERATIONS_TOKEN`; they create proposals and approval records only, never send external communications.
+
+## Facility map data
+
+The home-page map plots every US dialysis facility from the official CMS Dialysis Facility listing and overlays live National Weather Service alerts matched by county. Rebuild the dataset with `python services/worker/build_facility_map.py` (standard library only); it writes `apps/web/public/data/dialysis-facilities.json`. Facility pins sit at the centre of the facility's ZIP code (US Census Gazetteer), not its street address, and the directory says nothing about live capacity.
