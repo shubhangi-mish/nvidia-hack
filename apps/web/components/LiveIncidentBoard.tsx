@@ -1,0 +1,9 @@
+"use client";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+type Incident = { id: string; summary: string; verification_status: string; first_seen: string; location_label: string };
+export function LiveIncidentBoard() {
+  const [items, setItems] = useState<Incident[]>([]); const [error, setError] = useState("");
+  useEffect(() => { const load = () => fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"}/v1/incidents`).then(r => r.ok ? r.json() : Promise.reject()).then(setItems).catch(() => setError("Live incident information is temporarily unavailable.")); load(); const timer = setInterval(load, 30_000); return () => clearInterval(timer); }, []);
+  return <section className="live-board" aria-labelledby="live-title"><div><p className="eyebrow">Live public information</p><h2 id="live-title">Active incidents and service access</h2><p>Updates automatically every 30 seconds. A source record is not the same as confirmed service disruption.</p></div><div className="map-wrap"><iframe title="United States reference map" src="https://www.openstreetmap.org/export/embed.html?bbox=-127%2C24%2C-66%2C50&amp;layer=mapnik" loading="lazy" /><p className="hint">Map pins appear only when a public, verified coordinate is available. Personal report locations are never mapped.</p></div>{error ? <p role="alert">{error}</p> : <div className="live-list">{items.length === 0 ? <p>No public incidents are currently available.</p> : items.map(item => <article className="incident-card" key={item.id}><p className="eyebrow">{item.verification_status.replaceAll("_", " ")}</p><p>{item.summary}</p><small>{item.location_label} · {new Date(item.first_seen).toLocaleString()}</small><p><Link href={`/incidents/${item.id}`}>Open incident details</Link></p></article>)}</div>}</section>;
+}
