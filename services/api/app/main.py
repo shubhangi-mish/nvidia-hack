@@ -15,11 +15,15 @@ from .sources import OfficialEvent
 from .nebius import NebiusNotConfigured, investigate, smoke_test
 
 app = FastAPI(title="LASTLINE API", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=[value for value in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if value], allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Idempotency-Key", "tracking-token", "x-source-ingest-token", "x-operations-token"])
+app.add_middleware(CORSMiddleware, allow_origins=[value for value in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",") if value], allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Idempotency-Key", "tracking-token", "x-source-ingest-token", "x-operations-token"])
 
 class VerificationStatus(StrEnum):
     COMMUNITY_REPORTED = "community_reported"
     UNDER_INVESTIGATION = "under_investigation"
+    OFFICIALLY_CONFIRMED = "officially_confirmed"
+    DISPUTED = "disputed"
+    RESOLVED = "resolved"
+    UNKNOWN = "unknown"
 
 class ReportCreate(BaseModel):
     description: str = Field(min_length=10, max_length=4000)
