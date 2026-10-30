@@ -16,6 +16,11 @@ services:
     environment:
       DATABASE_URL: postgresql://lastline:change_me@db:5432/lastline
       SESSION_SECRET: development-only-change-before-deploy
+      SOURCE_INGEST_TOKEN: ${SOURCE_INGEST_TOKEN:-}
+      OPERATIONS_TOKEN: ${OPERATIONS_TOKEN:-}
+      NEBIUS_API_KEY: ${NEBIUS_API_KEY:-}
+      NEBIUS_BASE_URL: ${NEBIUS_BASE_URL:-https://api.tokenfactory.nebius.com/v1}
+      NEBIUS_NVIDIA_MODEL_ID: ${NEBIUS_NVIDIA_MODEL_ID:-}
     ports: ["8000:8000"]
     depends_on:
       db:
