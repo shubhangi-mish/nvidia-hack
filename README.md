@@ -39,4 +39,4 @@ Official source ingestion is protected by `SOURCE_INGEST_TOKEN`. Milestone 2 cur
 
 `services/worker/nws_poll.py` is the bounded one-shot NWS polling entry point. Run it only from an approved scheduler after setting its API URL and ingestion token; it reads the official NWS active-alert feed and sends the source record through the same intake endpoint.
 
-See [deployment instructions](docs/deployment.md) for the Vercel, Render, and Supabase demo path. The coordinator endpoints require `OPERATIONS_TOKEN`; they create proposals and approval records only, never send external communications.
+See [deployment instructions](docs/deployment.md) for the Vercel-only demo path. The coordinator endpoints require `OPERATIONS_TOKEN`; they create proposals and approval records only, never send external communications.

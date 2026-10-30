@@ -1,10 +1,30 @@
-# Demo deployment
+# Demo deployment (Vercel only)
 
 This configuration supports a **demonstration**, not a live emergency-operation claim.
 
-1. Create a Supabase project, enable PostGIS, and apply SQL migrations in order.
-2. Create a Render Web Service from this repository. Use `render.yaml` and populate its secret environment values. Set `CORS_ORIGINS` to the deployed Vercel URL.
-3. Create a Vercel project with root directory `apps/web`; set `NEXT_PUBLIC_API_BASE_URL` to the Render API URL.
-4. Add `NEBIUS_API_KEY`, `NEBIUS_BASE_URL`, and a model ID verified through that key's `/v1/models` catalog only when ready to activate investigator workflows.
+Two Vercel projects, both in the same team:
 
-Before showing a public URL, verify `/healthz`, `/readyz`, report creation, public redaction, source-attribution display, and the approval gate. Free services can sleep or expire; disclose that limitation in the demo.
+| Project | Root directory | Live URL |
+| --- | --- | --- |
+| `lastline-web` | `apps/web` (Next.js) | https://lastline-web.vercel.app |
+| `lastline-api` | `services/api` (FastAPI on Vercel Python) | https://lastline-api.vercel.app |
+
+## Deploy
+
+```powershell
+cd services/api; vercel deploy --prod
+cd apps/web;     vercel deploy --prod --build-env NEXT_PUBLIC_API_BASE_URL=https://lastline-api.vercel.app
+```
+
+## Required environment (project `lastline-api`)
+
+| Variable | Notes |
+| --- | --- |
+| `DATABASE_URL` | Postgres with PostGIS (Vercel Marketplace Neon or Supabase). Apply `infra/migrations/*.sql` in order first. |
+| `CORS_ORIGINS` | The web URL, e.g. `https://lastline-web.vercel.app` |
+| `SOURCE_INGEST_TOKEN`, `OPERATIONS_TOKEN` | Long random secrets protecting ingestion and coordinator endpoints. |
+| `NEBIUS_API_KEY`, `NEBIUS_BASE_URL`, `NEBIUS_NVIDIA_MODEL_ID` | Only when activating investigator workflows. The model ID must come from that key's `/v1/models` catalog. |
+
+Redeploy `lastline-api` after changing variables.
+
+Before showing a public URL, verify `/healthz`, `/readyz` (needs the database), report creation, public redaction, source-attribution display, and the approval gate.
